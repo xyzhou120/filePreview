@@ -1,0 +1,50 @@
+# File Preview Service Configuration
+
+server:
+  port: 8080
+
+spring:
+  servlet:
+    multipart:
+      # 最大文件上传大小
+      max-file-size: 500MB
+      max-request-size: 500MB
+      enabled: true
+
+  # 文件上传配置
+  datasource:
+    url: jdbc:h2:mem:filedb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+# 文件存储配置
+file:
+  # 文件上传目录
+  upload:
+    dir: /data/uploads
+  
+  # 预览服务基础URL（用于生成预览链接）
+  preview:
+    # 后端服务地址
+    base-url: http://localhost:8080
+
+# DWG转换器配置
+dwg:
+  # ODA File Converter 可执行文件路径
+  # Linux: /opt/ODAFileConverter/ODAFileConverter
+  # Windows: C:\Program Files\ODA\ODAFileConverter.exe
+  converter:
+    path: ${ODA_CONVERTER_PATH:/opt/ODAFileConverter/ODAFileConverter}
+    # 转换输出目录
+    output-dir: /tmp/dwg-preview
+    # 输出格式: PNG / PDF / SVG / DXF
+    out-format: PNG
+
+# 日志配置
+logging:
+  level:
+    com.example.filepreview: DEBUG
+    org.springframework.web: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

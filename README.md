@@ -12,7 +12,7 @@
 | 📄 PDF | PDF | pdf.js | 前端库 |
 | 📊 Excel | XLS, XLSX | SheetJS (xlsx.js) | 前端库 |
 | 📝 Word | DOC, DOCX | mammoth.js | 前端库 |
-| 📐 CAD | DWG, DXF | ODA Converter | 后端转换 |
+| 📐 CAD | DWG, DXF | SVG | 后端转换/渲染 |
 | 🎬 音视频 | MP3, MP4, WAV | `<audio>`/`<video>` | 前端原生 |
 | 📋 文本 | TXT, MD, JSON... | `<pre>`/marked | 前端库 |
 
@@ -44,9 +44,11 @@ file:
 
 dwg:
   converter:
-    path: /opt/ODAFileConverter/ODAFileConverter
+    path: ../resources/oda/ODAFileConverter.app/Contents/MacOS/ODAFileConverter
     output-dir: /tmp/dwg-preview
-    out-format: PNG
+    out-format: SVG
+    output-version: ACAD2018
+    timeout-seconds: 300
 ```
 
 #### API 接口
@@ -55,8 +57,8 @@ dwg:
 # 获取文件预览信息
 GET /api/file/preview?fileName=test.xlsx&fileUrl=http://xxx/test.xlsx
 
-# DWG预览转换
-GET /api/file/dwg/preview?fileUrl=http://xxx/test.dwg&format=PNG
+# DWG/DXF预览转换，返回 image/svg+xml
+GET /api/file/dwg/preview?fileUrl=http://xxx/test.dwg&format=SVG
 
 # 文件上传
 POST /api/file/upload
@@ -173,7 +175,14 @@ function openPreview(file) {
 
 ---
 
-## DWG 预览配置（可选）
+## DWG 预览配置
+
+当前项目的 CAD 预览链路：
+
+1. DXF 文件：后端直接解析常见实体并渲染为 SVG。
+2. DWG 文件：后端先调用 ODA File Converter 转为 DXF，再渲染为 SVG。
+
+内置 DXF 渲染器支持常见的 `LINE`、`CIRCLE`、`ARC`、`LWPOLYLINE`、`POLYLINE`、`TEXT/MTEXT`。复杂 CAD 特性（外部参照、填充、复杂块、三维对象等）需要接入更完整的 CAD 渲染引擎。
 
 ### 安装 ODA File Converter
 
@@ -244,7 +253,7 @@ file-preview-demo/
 | PDF | < 50MB | 1-3s | pdf.js 流式加载 |
 | Excel | < 10MB | 1-3s | 前端解析渲染 |
 | Word | < 5MB | 1-2s | mammoth 解析 |
-| DWG | < 50MB | 5-30s | 后端转换，首次慢 |
+| DWG | < 50MB | 5-30s | ODA转DXF后渲染SVG，首次慢 |
 
 ---
 
@@ -254,7 +263,7 @@ file-preview-demo/
 A: SheetJS 对复杂公式和宏支持有限，大文件建议限制只显示前100行。
 
 ### Q: DWG 预览报 500 错误？
-A: 检查 ODA Converter 是否正确安装并授权：`/opt/ODAFileConverter/ODAFileConverter -h`
+A: 检查 `dwg.converter.path` 是否指向可执行的 ODA File Converter。DXF 文件不依赖 ODA，DWG 文件需要 ODA 先转 DXF。
 
 ### Q: 跨域问题？
 A: 后端需要配置 CORS，或通过 Nginx 代理。

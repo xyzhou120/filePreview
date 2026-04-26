@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>ODAFileConverter</string>
+	<key>CFBundleGetInfoString</key>
+	<string>ODAFileConverter 27.1.0.0, Copyright (C) 2002-2026, Open Design Alliance</string>
+	<key>CFBundleIconFile</key>
+	<string>odalogo</string>
+	<key>CFBundleIdentifier</key>
+	<string>ODAFileConverter</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleLongVersionString</key>
+	<string>ODAFileConverter Version 27.1.0.0</string>
+	<key>CFBundleName</key>
+	<string>ODAFileConverter</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>27.1.0.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>27.1.0.0</string>
+	<key>CSResourcesFileMapped</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>(C) 2002-2026, Open Design Alliance</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHighResolutionCapable</key>
+	<string>True</string>
+</dict>
+</plist>

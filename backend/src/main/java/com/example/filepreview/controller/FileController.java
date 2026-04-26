@@ -135,18 +135,11 @@ public class FileController {
     @GetMapping("/dwg/preview")
     public ResponseEntity<Resource> dwgPreview(
             @RequestParam String fileUrl,
-            @RequestParam(defaultValue = "PNG") String format) {
+            @RequestParam(defaultValue = "SVG") String format) {
         
         log.info("DWG预览请求: fileUrl={}, format={}", fileUrl, format);
         
         try {
-            // 检查ODA转换器是否可用
-            if (!dwgConvertService.isConverterAvailable()) {
-                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(null);
-            }
-            
             // 执行转换
             String convertedFilePath = dwgConvertService.convert(fileUrl, format);
             
@@ -154,13 +147,12 @@ public class FileController {
             File file = new File(convertedFilePath);
             Resource resource = new FileSystemResource(file);
             
-            String contentType = format.equals("PDF") 
-                    ? "application/pdf" 
-                    : "image/png";
+            String contentType = "image/svg+xml";
             
             return ResponseEntity.ok()
                     .contentType(MediaType.parseMediaType(contentType))
                     .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=preview." + format.toLowerCase())
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
                     .body(resource);
                     
         } catch (Exception e) {

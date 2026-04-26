@@ -35,11 +35,15 @@ dwg:
   # Linux: /opt/ODAFileConverter/ODAFileConverter
   # Windows: C:\Program Files\ODA\ODAFileConverter.exe
   converter:
-    path: ${ODA_CONVERTER_PATH:/opt/ODAFileConverter/ODAFileConverter}
+    # 默认使用项目内资源；从 backend 目录启动时该相对路径可直接生效
+    path: ${ODA_CONVERTER_PATH:../resources/oda/ODAFileConverter.app/Contents/MacOS/ODAFileConverter}
     # 转换输出目录
     output-dir: /tmp/dwg-preview
-    # 输出格式: PNG / PDF / SVG / DXF
-    out-format: PNG
+    # ODA DWG->DXF输出版本
+    output-version: ACAD2018
+    # 预览接口输出SVG
+    out-format: SVG
+    timeout-seconds: 300
 
 # 日志配置
 logging:

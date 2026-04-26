@@ -31,6 +31,11 @@ public enum PreviewTypeEnum {
     WORD("word", "Word预览"),
 
     /**
+     * Office预览
+     */
+    OFFICE("office", "Office预览"),
+
+    /**
      * DWG CAD文件预览（后端转换）
      */
     DWG("dwg", "DWG预览"),
@@ -39,6 +44,11 @@ public enum PreviewTypeEnum {
      * Markdown预览
      */
     MARKDOWN("markdown", "Markdown预览"),
+
+    /**
+     * 文本预览
+     */
+    TEXT("text", "文本预览"),
 
     /**
      * 音视频预览

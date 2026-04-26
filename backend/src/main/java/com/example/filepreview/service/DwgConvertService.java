@@ -1,31 +1,32 @@
 package com.example.filepreview.service;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.URLConnection;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.Duration;
+import java.util.Comparator;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
-/**
- * DWG文件转换服务
- * 
- * 使用ODA File Converter将DWG转换为PDF/PNG
- * 
- * 安装ODA File Converter：
- * 1. 下载：https://www.opendesign.com/resources/oda-file-converter
- * 2. Linux: 解压到 /opt/ODAFileConverter/
- * 3. 授权：运行一次 ./ODAFileConverter - getActivationCode，然后激活
- * 
- * Docker部署：
- * docker run -d --name oda-converter -v /data/oda:/data keking/oda-converter:latest
- */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class DwgConvertService {
+
+    private final DxfSvgRenderService dxfSvgRenderService;
 
     @Value("${dwg.converter.path:/opt/ODAFileConverter/ODAFileConverter}")
     private String odaConverterPath;
@@ -33,178 +34,242 @@ public class DwgConvertService {
     @Value("${dwg.converter.output-dir:/tmp/dwg-preview}")
     private String outputDir;
 
-    @Value("${dwg.converter.out-format:PNG")
-    private String outputFormat;
+    @Value("${dwg.converter.output-version:ACAD2018}")
+    private String outputVersion;
+
+    @Value("${dwg.converter.timeout-seconds:300}")
+    private long timeoutSeconds;
+
+    @Value("${file.upload.dir:/data/uploads}")
+    private String uploadDir;
 
     /**
-     * 将DWG文件转换为PNG图片
+     * 返回可直接用于预览的 SVG 文件路径。
      *
-     * @param dwgUrl DWG文件的URL（需要是ODA能访问到的地址）
-     * @return 转换后的PNG文件路径
+     * DWG 会先通过 ODA File Converter 转成 DXF，再由内置 DXF 渲染器转 SVG。
+     * DXF 直接进入内置渲染器。
      */
-    public String convertToPng(String dwgUrl) {
-        return convert(dwgUrl, "PNG");
-    }
-
-    /**
-     * 将DWG文件转换为PDF
-     *
-     * @param dwgUrl DWG文件的URL
-     * @return 转换后的PDF文件路径
-     */
-    public String convertToPdf(String dwgUrl) {
-        return convert(dwgUrl, "PDF");
-    }
-
-    /**
-     * 执行DWG转换
-     *
-     * @param dwgUrl      DWG文件URL
-     * @param targetFormat 目标格式：PNG / PDF / SVG / DXF
-     * @return 转换后的文件路径
-     */
-    public String convert(String dwgUrl, String targetFormat) {
-        log.info("开始转换DWG文件: {}, 目标格式: {}", dwgUrl, targetFormat);
-
-        // 创建输出目录
-        File outputDirFile = new File(outputDir);
-        if (!outputDirFile.exists()) {
-            outputDirFile.mkdirs();
+    public String convert(String fileUrl, String targetFormat) {
+        String normalizedFormat = normalizeFormat(targetFormat);
+        if (!"SVG".equals(normalizedFormat)) {
+            throw new IllegalArgumentException("DWG预览当前输出SVG，暂不支持格式: " + targetFormat);
         }
 
-        // 生成唯一输出文件名
-        String outputFileName = UUID.randomUUID().toString() + "." + targetFormat.toLowerCase();
-        String outputFilePath = outputDir + "/" + outputFileName;
+        Path workDir = Paths.get(outputDir, UUID.randomUUID().toString());
+        Path inputDir = workDir.resolve("input");
+        Path odaOutputDir = workDir.resolve("oda-output");
+        Path previewDir = Paths.get(outputDir, "preview");
 
-        // 下载DWG文件到临时目录
-        String tempDwgPath = null;
         try {
-            tempDwgPath = downloadDwgFile(dwgUrl);
-            
-            // 执行转换命令
-            // ODA File Converter 用法：ODAFileConverter <input_file> <output_dir> <output_format>
-            ProcessBuilder pb = new ProcessBuilder(
-                    odaConverterPath,
-                    tempDwgPath,
-                    outputDir,
-                    targetFormat
-            );
-            
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
+            Files.createDirectories(inputDir);
+            Files.createDirectories(odaOutputDir);
+            Files.createDirectories(previewDir);
 
-            // 等待转换完成（最多5分钟）
-            boolean finished = process.waitFor(5, TimeUnit.MINUTES);
-            
-            if (!finished) {
-                process.destroyForcibly();
-                throw new RuntimeException("DWG转换超时");
-            }
+            Path sourceFile = copySourceToWorkDir(fileUrl, inputDir);
+            String sourceType = getExtension(sourceFile.getFileName().toString());
+            Path dxfFile = "dxf".equals(sourceType) ? sourceFile : convertDwgToDxf(sourceFile, inputDir, odaOutputDir);
 
-            int exitCode = process.waitFor();
-            
-            // 读取转换输出
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    log.debug("ODA输出: {}", line);
-                }
-            }
-
-            if (exitCode != 0) {
-                throw new RuntimeException("DWG转换失败，退出码: " + exitCode);
-            }
-
-            // 检查输出文件
-            File outputFile = new File(outputFilePath);
-            if (!outputFile.exists()) {
-                // ODA可能输出文件名不同，查找最新生成的文件
-                File[] files = outputDirFile.listFiles((dir, name) -> 
-                        name.endsWith("." + targetFormat.toLowerCase()));
-                if (files != null && files.length > 0) {
-                    // 返回最新创建的文件
-                    long latest = 0;
-                    for (File f : files) {
-                        if (f.lastModified() > latest) {
-                            latest = f.lastModified();
-                            outputFilePath = f.getAbsolutePath();
-                        }
-                    }
-                } else {
-                    throw new RuntimeException("转换后的文件不存在");
-                }
-            }
-
-            log.info("DWG转换成功: {}", outputFilePath);
-            return outputFilePath;
-
+            String svg = dxfSvgRenderService.render(dxfFile);
+            Path svgFile = previewDir.resolve(stripExtension(sourceFile.getFileName().toString()) + "-" + UUID.randomUUID() + ".svg");
+            Files.write(svgFile, svg.getBytes(StandardCharsets.UTF_8));
+            log.info("CAD预览生成成功: {}", svgFile);
+            return svgFile.toString();
         } catch (Exception e) {
-            log.error("DWG转换失败", e);
-            throw new RuntimeException("DWG转换失败: " + e.getMessage(), e);
+            log.error("CAD预览生成失败: {}", fileUrl, e);
+            throw new RuntimeException("CAD预览生成失败: " + e.getMessage(), e);
         } finally {
-            // 清理临时DWG文件
-            if (tempDwgPath != null) {
-                try {
-                    Files.deleteIfExists(Path.of(tempDwgPath));
-                } catch (IOException e) {
-                    log.warn("清理临时文件失败: {}", tempDwgPath);
-                }
-            }
+            deleteQuietly(workDir);
         }
     }
 
-    /**
-     * 下载DWG文件到本地
-     */
-    private String downloadDwgFile(String dwgUrl) throws IOException {
-        log.debug("下载DWG文件: {}", dwgUrl);
-        
-        String tempFile = outputDir + "/" + UUID.randomUUID().toString() + ".dwg";
-        
-        try (InputStream in = new java.net.URL(dwgUrl).openStream();
-             FileOutputStream out = new FileOutputStream(tempFile)) {
-            
-            byte[] buffer = new byte[8192];
-            int len;
-            while ((len = in.read(buffer)) != -1) {
-                out.write(buffer, 0, len);
-            }
-        }
-        
-        log.debug("DWG文件下载完成: {}", tempFile);
-        return tempFile;
+    public String convertToSvg(String fileUrl) {
+        return convert(fileUrl, "SVG");
     }
 
-    /**
-     * 获取转换后的预览URL
-     * 
-     * @param dwgUrl 原始DWG的URL
-     * @param basePreviewUrl 预览服务的基础URL
-     * @return 预览URL
-     */
-    public String getPreviewUrl(String dwgUrl, String basePreviewUrl) {
-        String encodedUrl;
-        try {
-            encodedUrl = java.net.URLEncoder.encode(dwgUrl, "UTF-8");
-        } catch (Exception e) {
-            encodedUrl = dwgUrl;
-        }
-        return basePreviewUrl + "/dwg/preview?fileUrl=" + encodedUrl;
+    public String convertToPng(String fileUrl) {
+        throw new UnsupportedOperationException("当前DWG预览链路输出SVG，请调用convertToSvg");
     }
 
-    /**
-     * 检查ODA Converter是否可用
-     */
+    public String convertToPdf(String fileUrl) {
+        throw new UnsupportedOperationException("当前DWG预览链路输出SVG，请调用convertToSvg");
+    }
+
     public boolean isConverterAvailable() {
+        Path converter = Paths.get(odaConverterPath);
+        return Files.isRegularFile(converter) && Files.isExecutable(converter);
+    }
+
+    private Path copySourceToWorkDir(String fileUrl, Path inputDir) throws IOException {
+        if (!StringUtils.hasText(fileUrl)) {
+            throw new IllegalArgumentException("fileUrl不能为空");
+        }
+
+        URI uri = parseUri(fileUrl);
+        String extension = getExtension(uri != null && StringUtils.hasText(uri.getPath()) ? uri.getPath() : fileUrl);
+        if (!"dwg".equals(extension) && !"dxf".equals(extension)) {
+            throw new IllegalArgumentException("仅支持DWG/DXF文件预览");
+        }
+
+        String sourcePath = uri != null && StringUtils.hasText(uri.getPath()) ? uri.getPath() : fileUrl;
+        String normalizedPath = stripQuery(sourcePath.replace('\\', '/'));
+        int slashIndex = normalizedPath.lastIndexOf('/');
+        String fileName = slashIndex >= 0 ? normalizedPath.substring(slashIndex + 1) : normalizedPath;
+        if (!StringUtils.hasText(fileName) || !fileName.toLowerCase(Locale.ROOT).endsWith("." + extension)) {
+            fileName = UUID.randomUUID() + "." + extension;
+        }
+        Path target = inputDir.resolve(fileName);
+
+        if (uri != null && ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))) {
+            URLConnection connection = uri.toURL().openConnection();
+            connection.setConnectTimeout((int) Duration.ofSeconds(15).toMillis());
+            connection.setReadTimeout((int) Duration.ofMinutes(5).toMillis());
+            try (InputStream inputStream = connection.getInputStream()) {
+                Files.copy(inputStream, target);
+            }
+            return target;
+        }
+
+        Path localPath = resolveLocalPath(fileUrl, uri);
+        if (!Files.isRegularFile(localPath)) {
+            throw new IOException("源文件不存在: " + localPath);
+        }
+        Files.copy(localPath, target);
+        return target;
+    }
+
+    private Path convertDwgToDxf(Path sourceFile, Path inputDir, Path odaOutputDir) throws IOException, InterruptedException {
+        if (!isConverterAvailable()) {
+            throw new IllegalStateException("ODA File Converter不可用，请配置dwg.converter.path");
+        }
+
+        Path logFile = odaOutputDir.resolve("oda-converter.log");
+        ProcessBuilder processBuilder = new ProcessBuilder(
+                odaConverterPath,
+                inputDir.toString(),
+                odaOutputDir.toString(),
+                outputVersion,
+                "DXF",
+                "0",
+                "1"
+        );
+        processBuilder.redirectErrorStream(true);
+        processBuilder.redirectOutput(logFile.toFile());
+
+        log.info("执行ODA转换: {}", String.join(" ", processBuilder.command()));
+        Process process = processBuilder.start();
+        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new RuntimeException("ODA转换超时");
+        }
+        if (process.exitValue() != 0) {
+            String output = Files.exists(logFile)
+                    ? new String(Files.readAllBytes(logFile), StandardCharsets.UTF_8)
+                    : "";
+            throw new RuntimeException("ODA转换失败，退出码: " + process.exitValue() + "，输出: " + abbreviate(output, 1000));
+        }
+
+        String expectedBaseName = stripExtension(sourceFile.getFileName().toString()).toLowerCase(Locale.ROOT);
+        try (Stream<Path> files = Files.walk(odaOutputDir)) {
+            return files.filter(Files::isRegularFile)
+                    .filter(path -> "dxf".equals(getExtension(path.getFileName().toString())))
+                    .filter(path -> stripExtension(path.getFileName().toString()).toLowerCase(Locale.ROOT).equals(expectedBaseName))
+                    .findFirst()
+                    .orElseGet(() -> findLatestDxf(odaOutputDir));
+        }
+    }
+
+    private Path findLatestDxf(Path odaOutputDir) {
+        try (Stream<Path> files = Files.walk(odaOutputDir)) {
+            return files.filter(Files::isRegularFile)
+                    .filter(path -> "dxf".equals(getExtension(path.getFileName().toString())))
+                    .max(Comparator.comparingLong(path -> path.toFile().lastModified()))
+                    .orElseThrow(() -> new RuntimeException("ODA转换后未找到DXF文件"));
+        } catch (IOException e) {
+            throw new RuntimeException("读取ODA输出目录失败", e);
+        }
+    }
+
+    private Path resolveLocalPath(String fileUrl, URI uri) {
+        if (uri != null && "file".equalsIgnoreCase(uri.getScheme())) {
+            return Paths.get(uri);
+        }
+
+        String path = stripQuery(fileUrl);
+        if (path.startsWith("/uploads/")) {
+            return Paths.get(uploadDir, path.substring("/uploads/".length()));
+        }
+        Path candidate = Paths.get(path);
+        if (candidate.isAbsolute()) {
+            return candidate;
+        }
+        return Paths.get(uploadDir, path);
+    }
+
+    private URI parseUri(String value) {
         try {
-            ProcessBuilder pb = new ProcessBuilder(odaConverterPath, "-h");
-            Process process = pb.start();
-            boolean finished = process.waitFor(10, TimeUnit.SECONDS);
-            return finished && process.exitValue() == 0;
-        } catch (Exception e) {
-            log.warn("ODA Converter不可用: {}", e.getMessage());
-            return false;
+            return URI.create(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private String normalizeFormat(String targetFormat) {
+        if (!StringUtils.hasText(targetFormat)) {
+            return "SVG";
+        }
+        return targetFormat.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String getExtension(String value) {
+        String clean = stripQuery(value).toLowerCase(Locale.ROOT);
+        int dot = clean.lastIndexOf('.');
+        if (dot < 0 || dot == clean.length() - 1) {
+            return "";
+        }
+        return clean.substring(dot + 1);
+    }
+
+    private String stripExtension(String fileName) {
+        String clean = stripQuery(fileName);
+        int dot = clean.lastIndexOf('.');
+        return dot < 0 ? clean : clean.substring(0, dot);
+    }
+
+    private String stripQuery(String value) {
+        int queryIndex = value.indexOf('?');
+        int fragmentIndex = value.indexOf('#');
+        int endIndex = value.length();
+        if (queryIndex >= 0) {
+            endIndex = Math.min(endIndex, queryIndex);
+        }
+        if (fragmentIndex >= 0) {
+            endIndex = Math.min(endIndex, fragmentIndex);
+        }
+        return value.substring(0, endIndex);
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength) + "...";
+    }
+
+    private void deleteQuietly(Path path) {
+        if (path == null || !Files.exists(path)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(path)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(item -> {
+                try {
+                    Files.deleteIfExists(item);
+                } catch (IOException e) {
+                    log.warn("清理临时文件失败: {}", item);
+                }
+            });
+        } catch (IOException e) {
+            log.warn("清理临时目录失败: {}", path);
         }
     }
 }

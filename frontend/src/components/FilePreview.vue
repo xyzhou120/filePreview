@@ -107,7 +107,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import * as XLSX from 'xlsx'
 import mammoth from 'mammoth'
 import { marked } from 'marked'
@@ -175,6 +175,11 @@ const pdfJsUrl = computed(() => {
   return `${props.pdfJsCdn}/web/viewer.html?file=${encodedUrl}`
 })
 
+const normalizedApiBaseUrl = computed(() => {
+  const baseUrl = props.apiBaseUrl.replace(/\/+$/, '')
+  return baseUrl.endsWith('/api') ? baseUrl : `${baseUrl}/api`
+})
+
 /**
  * 处理图片加载错误
  */
@@ -207,6 +212,7 @@ function downloadFile() {
 async function loadPreview() {
   loading.value = false
   error.value = null
+  imageError.value = false
 
   try {
     switch (previewType.value) {
@@ -297,17 +303,20 @@ async function loadMarkdown() {
  */
 async function loadDwg() {
   dwgLoading.value = true
-  dwgPreviewUrl.value = null
+  revokeDwgPreviewUrl()
   
   try {
-    // 调用后端DWG转换接口
-    const encodedUrl = encodeURIComponent(props.fileUrl)
-    const response = await axios.get(
-      `${props.apiBaseUrl}/file/dwg/preview?fileUrl=${encodedUrl}`,
-      { responseType: 'blob' }
-    )
+    const response = await axios.get(`${normalizedApiBaseUrl.value}/file/dwg/preview`, {
+      params: {
+        fileUrl: props.fileUrl,
+        format: 'SVG'
+      },
+      responseType: 'blob',
+      headers: {
+        Accept: 'image/svg+xml'
+      }
+    })
     
-    // 创建本地URL
     dwgPreviewUrl.value = URL.createObjectURL(response.data)
   } catch (e) {
     console.error('DWG预览生成失败:', e)
@@ -317,13 +326,18 @@ async function loadDwg() {
   }
 }
 
+function revokeDwgPreviewUrl() {
+  if (dwgPreviewUrl.value) {
+    URL.revokeObjectURL(dwgPreviewUrl.value)
+    dwgPreviewUrl.value = null
+  }
+}
+
 // 监听fileUrl变化，重新加载预览
 watch(() => props.fileUrl, loadPreview, { immediate: true })
 
-onMounted(() => {
-  if (props.fileUrl) {
-    loadPreview()
-  }
+onBeforeUnmount(() => {
+  revokeDwgPreviewUrl()
 })
 </script>
 
